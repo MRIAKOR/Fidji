@@ -1,6 +1,6 @@
 # Fidji
 What is fidji?
-fidji is a notes app that looks and feels like a macOS window: traffic lights, a floating toolbar, calm typography. It runs in the browser — open it and write. Essays, notes, lists, tables — everything stays on your machine.
+fidji is a notes app that looks and feels like a macOS window: traffic lights, a floating toolbar, calm typography. Essays, notes, lists, tables — everything stays on your machine.
 Features
  macOS window UI — traffic lights, title bar, native-feeling chrome
  Rich text — bold, italic, underline, strikethrough, H1/H2
