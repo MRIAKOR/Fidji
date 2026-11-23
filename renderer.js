@@ -6,9 +6,9 @@
 
   const winEl = $('#window');
   const listEl = $('#noteList');
-  const editor = $('#editor');
+  let editor = $('#editor');
   const editorPane = $('.editor-pane');
-  const titleEl = $('#noteTitle');
+  let titleEl = $('#noteTitle');
   const docTitleEl = $('#docTitle');
   const searchEl = $('#search');
 
@@ -94,6 +94,7 @@
   let reflowTimer = null;
   let reflowOn = false;
   let lastEdWidth = 0;
+  let editorRO = null;
 
   const NARROW_W = 1000;
   const PANEL_MS = 280;
@@ -110,6 +111,7 @@
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   const TRASH_SVG = '<svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9.5 7V5.5a1.5 1.5 0 0 1 1.5-1.5h2a1.5 1.5 0 0 1 1.5 1.5V7"/><path d="M6.5 7l.8 12.2a1.5 1.5 0 0 0 1.5 1.3h6.4a1.5 1.5 0 0 0 1.5-1.3L18.5 7"/><line x1="10" y1="11" x2="10" y2="16"/><line x1="14" y1="11" x2="14" y2="16"/></svg>';
+  const PIN_SVG = '<svg class="ic ic-sm" viewBox="0 0 24 24" style="stroke-width:2.4"><g transform="rotate(42 12 12)"><path d="M12 16.5v5"/><path d="M9.5 3.5h5l-.6 5.6 2.6 2.2v1.2h-9v-1.2l2.6-2.2z"/></g></svg>';
   const SAVE_SVG = '<svg class="ic" viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4"/><rect x="8" y="13" width="8" height="7"/></svg>';
   const LIST_SVG = '<svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><line x1="9" y1="4" x2="9" y2="20"/></svg>';
 
@@ -153,6 +155,7 @@
       'tr.insertedEnd': 'Inserted at end', 'tr.cantInsert': 'Cannot insert here',
       'tr.copied': 'Copied', 'tr.copyFail': 'Copy failed',
       'act.delete': 'Delete', 'act.done': 'Done', 'act.close': 'Close', 'act.undo': 'Undo',
+      'act.pin': 'Pin', 'act.unpin': 'Unpin',
       'save.btn': 'Save', 'save.dirty': 'Not saved', 'save.saving': 'Saving…', 'save.saved': 'Saved', 'save.error': 'Save failed',
       'toast.deleted': 'Note deleted',
       'lock.title': 'Fidji is locked', 'lock.sub': 'Enter your password to continue.', 'lock.ph': 'Password',
@@ -197,6 +200,7 @@
       'tr.insertedEnd': 'Вставлено в конец', 'tr.cantInsert': 'Не удалось вставить',
       'tr.copied': 'Скопировано', 'tr.copyFail': 'Не удалось скопировать',
       'act.delete': 'Удалить', 'act.done': 'Готово', 'act.close': 'Закрыть', 'act.undo': 'Вернуть',
+      'act.pin': 'Закрепить', 'act.unpin': 'Открепить',
       'save.btn': 'Сохранить', 'save.dirty': 'Не сохранено', 'save.saving': 'Сохранение…', 'save.saved': 'Сохранено', 'save.error': 'Ошибка сохранения',
       'toast.deleted': 'Заметка удалена',
       'lock.title': 'Fidji заблокирован', 'lock.sub': 'Введите пароль, чтобы продолжить.', 'lock.ph': 'Пароль',
@@ -237,6 +241,8 @@
 
   ensureUI();
   initPanels();
+  bindEditorEvents();
+  bindTitleEvents();
 
   function loadToolCfg() {
     let saved = null;
@@ -326,6 +332,145 @@
     }
   }
 
+  /* ---------- Editor element swap (isolates undo history per note) ---------- */
+  function observeEditor() {
+    if (editorRO && editor) {
+      editorRO.disconnect();
+      editorRO.observe(editor);
+    }
+  }
+
+  function resetEditableElements() {
+    const oldEd = editor;
+    if (oldEd && oldEd.parentNode) {
+      const fresh = document.createElement('div');
+      fresh.id = 'editor';
+      fresh.className = 'editor';
+      fresh.setAttribute('contenteditable', 'true');
+      fresh.setAttribute('dir', 'auto');
+      fresh.setAttribute('spellcheck', 'true');
+      fresh.setAttribute('aria-label', 'Note body');
+      fresh.setAttribute('data-ph', oldEd.getAttribute('data-ph') || 'Start writing…');
+      oldEd.parentNode.replaceChild(fresh, oldEd);
+      editor = fresh;
+      bindEditorEvents();
+      observeEditor();
+    }
+
+    const oldTitle = titleEl;
+    if (oldTitle && oldTitle.parentNode) {
+      const ft = document.createElement('input');
+      ft.id = 'noteTitle';
+      ft.className = 'note-title';
+      ft.type = 'text';
+      ft.placeholder = oldTitle.placeholder;
+      ft.setAttribute('aria-label', 'Note title');
+      if (oldTitle.hasAttribute('data-i18n-ph')) ft.setAttribute('data-i18n-ph', oldTitle.getAttribute('data-i18n-ph'));
+      oldTitle.parentNode.replaceChild(ft, oldTitle);
+      titleEl = ft;
+      bindTitleEvents();
+    }
+  }
+
+  function bindTitleEvents() {
+    if (!titleEl) return;
+    titleEl.addEventListener('input', () => { syncDocTitle(); queueSave(); });
+  }
+
+  function bindEditorEvents() {
+    if (!editor) return;
+
+    editor.addEventListener('paste', (e) => {
+      if (activeTool) { e.preventDefault(); return; }
+      e.preventDefault();
+      const cd = e.clipboardData || window.clipboardData;
+      if (!cd) return;
+      let text = cd.getData('text/plain');
+      if (text == null) text = '';
+      const lines = text.split(/\r\n|\r|\n/);
+      const frag = document.createDocumentFragment();
+      lines.forEach(line => {
+        const d = document.createElement('div');
+        if (line === '') d.innerHTML = '<br>';
+        else d.textContent = line;
+        frag.appendChild(d);
+      });
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount) {
+        const range = sel.getRangeAt(0);
+        range.deleteContents();
+        const lastNode = frag.lastChild;
+        range.insertNode(frag);
+        if (lastNode) {
+          const nr = document.createRange();
+          nr.setStartAfter(lastNode);
+          nr.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(nr);
+        }
+      } else {
+        editor.appendChild(frag);
+      }
+      queueSave();
+    });
+
+    editor.addEventListener('input', () => { queueSave(); });
+    editor.addEventListener('cut', () => queueSave());
+    editor.addEventListener('drop', (e) => { e.preventDefault(); queueSave(); });
+    editor.addEventListener('mouseup', updateToolbarState);
+    editor.addEventListener('keyup', (e) => {
+      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].indexOf(e.key) !== -1) updateToolbarState();
+    });
+
+    editor.addEventListener('click', (e) => {
+      const li = e.target.closest('ul.checklist > li');
+      if (li) { li.classList.toggle('checked'); queueSave(); }
+    });
+
+    editor.addEventListener('pointerdown', (e) => {
+      if (isPlacing()) return;
+      if (activeTool) return;
+      if (e.button !== 0) return;
+      const photo = e.target.closest('.photo');
+      if (!photo) {
+        deselectPhoto();
+        if (document.activeElement !== editor) {
+          setTimeout(() => { if (!activeTool && !isPlacing()) editor.focus(); }, 0);
+        }
+        return;
+      }
+      const handleRotate = e.target.closest('.ph-rot');
+      const handleResize = e.target.closest('.ph-rs');
+      e.preventDefault();
+      selectPhoto(photo);
+      const rect = editor.getBoundingClientRect();
+      const cx = parseFloat(photo.dataset.cx) || 0;
+      const cy = parseFloat(photo.dataset.cy) || 0;
+      const centerClientX = rect.left + cx;
+      const centerClientY = rect.top + cy;
+      const startX = e.clientX;
+      const startY = e.clientY;
+      if (handleRotate) {
+        interaction = {
+          type: 'rotate', el: photo, centerClientX, centerClientY,
+          startAngle: Math.atan2(startY - centerClientY, startX - centerClientX),
+          startRot: parseFloat(photo.dataset.rot) || 0
+        };
+      } else if (handleResize) {
+        interaction = {
+          type: 'resize', el: photo, centerClientX, centerClientY,
+          startW: parseFloat(photo.dataset.w) || 160,
+          startDist: Math.max(1, Math.hypot(startX - centerClientX, startY - centerClientY))
+        };
+      } else {
+        interaction = { type: 'move', el: photo, startX, startY, startCx: cx, startCy: cy };
+      }
+      window.addEventListener('pointermove', onPhotoPointerMove);
+      window.addEventListener('pointerup', onPhotoPointerUp);
+      window.addEventListener('pointercancel', onPhotoPointerUp);
+    });
+  }
+
   /* ---------- Panels ---------- */
   function isNarrow() {
     return (window.innerWidth || document.documentElement.clientWidth || 1280) < NARROW_W;
@@ -360,8 +505,6 @@
     requestAnimationFrame(() => requestAnimationFrame(() => winEl.classList.remove('no-anim')));
   }
 
-  // Layout mode is switched only after the collapse animation finished,
-  // with transitions muted, so a closed panel never flashes into view.
   function commitMode(next) {
     winEl.classList.add('no-anim');
     compact = next;
@@ -905,19 +1048,31 @@
     renderList();
   }
 
+  async function togglePin(id) {
+    const n = notes.find(x => x.id === id);
+    if (!n) return;
+    await flushCurrentNote();
+    n.pinned = !n.pinned;
+    await persist();
+    renderList();
+  }
+
   function renderList() {
     if (!listEl) return;
     const scroll = listEl.scrollTop;
     const q = searchEl ? searchEl.value.trim().toLowerCase() : '';
     listEl.innerHTML = '';
 
-    let shown = notes;
+    let shown = notes.slice();
     if (q) {
-      shown = notes.filter(n =>
+      shown = shown.filter(n =>
         (n.title || '').toLowerCase().includes(q) ||
         stripHtml(n.html).toLowerCase().includes(q)
       );
     }
+
+    // Закреплённые заметки всегда сверху, порядок внутри групп ручной
+    shown = shown.filter(n => n.pinned).concat(shown.filter(n => !n.pinned));
 
     if (!shown.length) {
       const e = document.createElement('div');
@@ -933,21 +1088,28 @@
 
     shown.forEach(n => {
       const item = document.createElement('div');
-      item.className = 'note-item' + (n.id === currentId ? ' active' : '');
+      item.className = 'note-item' + (n.id === currentId ? ' active' : '') + (n.pinned ? ' pinned' : '');
       item.tabIndex = 0;
+
+      const pinLabel = n.pinned ? t('act.unpin') : t('act.pin');
 
       item.innerHTML =
         '<span class="nt">' + esc(n.title || t('doc.untitled')) + '</span>' +
         '<span class="np">' + esc(notePreview(n)) + '</span>' +
         '<span class="nd">' + fmtDate(n.updatedAt) + '</span>' +
+        '<button class="pin' + (n.pinned ? ' on' : '') + '" title="' + esc(pinLabel) + '" aria-label="' + esc(pinLabel) + '">' + PIN_SVG + '</button>' +
         '<button class="del" title="' + esc(t('act.delete')) + '" aria-label="' + esc(t('act.delete')) + '">' + TRASH_SVG + '</button>';
 
       item.addEventListener('click', (ev) => {
-        if (ev.target.closest('.del')) return;
+        if (ev.target.closest('.del') || ev.target.closest('.pin')) return;
         openNote(n.id);
       });
       item.addEventListener('keydown', (ev) => {
         if (ev.key === 'Enter') openNote(n.id);
+      });
+      item.querySelector('.pin').addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        togglePin(n.id);
       });
       item.querySelector('.del').addEventListener('click', (ev) => {
         ev.stopPropagation();
@@ -1006,6 +1168,9 @@
     closeTranslatePane();
     hideTableSettings();
 
+    // Новый элемент редактора = чистая история отмены для этой заметки
+    resetEditableElements();
+
     titleEl.value = n.title || '';
     editor.innerHTML = n.html || '';
     sanitizeEditor();
@@ -1034,7 +1199,7 @@
   async function newNote() {
     await flushCurrentNote();
     const now = Date.now();
-    const n = { id: uid(), title: '', html: '', draw: '', createdAt: now, updatedAt: now };
+    const n = { id: uid(), title: '', html: '', draw: '', pinned: false, createdAt: now, updatedAt: now };
     notes.unshift(n);
     await persist();
     await openNote(n.id);
@@ -1124,41 +1289,7 @@
     Array.from(editor.childNodes).forEach(sanitizeNode);
   }
 
-  /* ---------- Paste ---------- */
-  editor.addEventListener('paste', (e) => {
-    if (activeTool) { e.preventDefault(); return; }
-    e.preventDefault();
-    const cd = e.clipboardData || window.clipboardData;
-    if (!cd) return;
-    let text = cd.getData('text/plain');
-    if (text == null) text = '';
-    const lines = text.split(/\r\n|\r|\n/);
-    const frag = document.createDocumentFragment();
-    lines.forEach(line => {
-      const d = document.createElement('div');
-      if (line === '') d.innerHTML = '<br>';
-      else d.textContent = line;
-      frag.appendChild(d);
-    });
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount) {
-      const range = sel.getRangeAt(0);
-      range.deleteContents();
-      const lastNode = frag.lastChild;
-      range.insertNode(frag);
-      if (lastNode) {
-        const nr = document.createRange();
-        nr.setStartAfter(lastNode);
-        nr.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(nr);
-      }
-    } else {
-      editor.appendChild(frag);
-    }
-    queueSave();
-  });
-
+  /* ---------- Formatting ---------- */
   function exec(cmd) {
     if (activeTool) setTool(null);
     if (document.activeElement !== editor) editor.focus();
@@ -1221,15 +1352,6 @@
     b.addEventListener('mousedown', (e) => { e.preventDefault(); block(b.dataset.block); });
   });
 
-  /* ---------- Typing -> autosave ---------- */
-  editor.addEventListener('input', () => { queueSave(); });
-  titleEl.addEventListener('input', () => { syncDocTitle(); queueSave(); });
-  editor.addEventListener('cut', () => queueSave());
-  editor.addEventListener('drop', (e) => { e.preventDefault(); queueSave(); });
-  editor.addEventListener('mouseup', updateToolbarState);
-  editor.addEventListener('keyup', (e) => {
-    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].indexOf(e.key) !== -1) updateToolbarState();
-  });
   document.addEventListener('selectionchange', () => {
     if (isMain() && document.activeElement === editor) updateToolbarState();
   });
@@ -1245,35 +1367,134 @@
     });
   });
 
-  const checklistBtn = $('#btnChecklist');
-  if (checklistBtn) checklistBtn.addEventListener('click', () => {
-    if (!isMain()) return;
-    editor.focus();
+  // Превращаем выделенные блоки в чек-лист, сохраняя их текст и оформление.
+  function convertSelectionToChecklist() {
+    if (!editor) return false;
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return false;
+    const range = sel.getRangeAt(0);
+    if (!editor.contains(range.commonAncestorContainer)) return false;
+
+    const nodes = Array.from(editor.childNodes);
+    if (!nodes.length) return false;
+
+    function topNode(container, offset, isStart) {
+      if (container === editor) {
+        if (!nodes.length) return null;
+        const idx = isStart
+          ? Math.max(0, Math.min(offset, nodes.length - 1))
+          : Math.max(0, Math.min(offset - 1, nodes.length - 1));
+        return nodes[idx];
+      }
+      let n = container;
+      while (n && n.parentNode !== editor) n = n.parentNode;
+      return n;
+    }
+
+    const startNode = topNode(range.startContainer, range.startOffset, true);
+    const endNode = topNode(range.endContainer, range.endOffset, false);
+    if (!startNode || !endNode) return false;
+
+    let i1 = nodes.indexOf(startNode);
+    let i2 = nodes.indexOf(endNode);
+    if (i1 < 0 || i2 < 0) return false;
+    if (i1 > i2) { const tmp = i1; i1 = i2; i2 = tmp; }
+
+    const ul = document.createElement('ul');
+    ul.className = 'checklist';
+    const toRemove = [];
+    let anchorNode = null;
+    let firstLi = null;
+
+    for (let i = i1; i <= i2; i++) {
+      const node = nodes[i];
+
+      if (node.nodeType === 1) {
+        if (node.nodeName === 'UL' && node.classList.contains('checklist')) {
+          if (!anchorNode) anchorNode = node;
+          Array.from(node.children).forEach(li => {
+            ul.appendChild(li);
+            if (!firstLi) firstLi = li;
+          });
+          toRemove.push(node);
+          continue;
+        }
+        if (node.nodeName === 'TABLE' || node.classList.contains('photo')) continue;
+        if (!anchorNode) anchorNode = node;
+        const li = document.createElement('li');
+        const text = (node.textContent || '').trim();
+        const html = node.innerHTML || '';
+        li.innerHTML = (text || (html && html !== '<br>')) ? html : '<br>';
+        ul.appendChild(li);
+        if (!firstLi) firstLi = li;
+        toRemove.push(node);
+      } else if (node.nodeType === 3) {
+        const text = node.textContent || '';
+        if (!text.trim()) continue;
+        if (!anchorNode) anchorNode = node;
+        const li = document.createElement('li');
+        li.textContent = text;
+        ul.appendChild(li);
+        if (!firstLi) firstLi = li;
+        toRemove.push(node);
+      }
+    }
+
+    if (!firstLi) return false;
+
+    if (anchorNode && anchorNode.parentNode === editor) editor.insertBefore(ul, anchorNode);
+    else editor.appendChild(ul);
+    toRemove.forEach(n => { if (n.parentNode === editor) editor.removeChild(n); });
+
+    const r = document.createRange();
+    r.selectNodeContents(firstLi);
+    r.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(r);
+    return true;
+  }
+
+  function insertEmptyChecklist() {
+    if (!editor) return;
     const ul = document.createElement('ul');
     ul.className = 'checklist';
     const li = document.createElement('li');
-    li.textContent = lang === 'ru' ? 'Задача' : 'Task';
+    li.innerHTML = '<br>';
     ul.appendChild(li);
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0 && editor.contains(sel.anchorNode)) {
-      const range = sel.getRangeAt(0);
-      range.deleteContents();
-      range.insertNode(ul);
-      const r = document.createRange();
-      r.selectNodeContents(li);
-      r.collapse(false);
-      sel.removeAllRanges();
-      sel.addRange(r);
-    } else {
-      editor.appendChild(ul);
-    }
-    queueSave();
-  });
 
-  editor.addEventListener('click', (e) => {
-    const li = e.target.closest('ul.checklist > li');
-    if (li) { li.classList.toggle('checked'); queueSave(); }
-  });
+    const sel = window.getSelection();
+    let inserted = false;
+    if (sel && sel.rangeCount && editor.contains(sel.anchorNode)) {
+      const range = sel.getRangeAt(0);
+      range.collapse(false);
+      range.insertNode(ul);
+      inserted = true;
+    }
+    if (!inserted) editor.appendChild(ul);
+
+    const r = document.createRange();
+    r.selectNodeContents(li);
+    r.collapse(false);
+    const s2 = window.getSelection();
+    s2.removeAllRanges();
+    s2.addRange(r);
+  }
+
+  const checklistBtn = $('#btnChecklist');
+  if (checklistBtn) {
+    checklistBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    checklistBtn.addEventListener('click', () => {
+      if (!isMain()) return;
+      if (activeTool) setTool(null);
+      const ok = convertSelectionToChecklist();
+      if (!ok) {
+        if (document.activeElement !== editor) editor.focus();
+        insertEmptyChecklist();
+      }
+      updateDrawLayerBox();
+      queueSave();
+    });
+  }
 
   const tableBtn = $('#btnTable');
   if (tableBtn) tableBtn.addEventListener('click', () => {
@@ -1596,48 +1817,6 @@
       placePendingAt(e.clientX, e.clientY);
     }, true);
   }
-  editor.addEventListener('pointerdown', (e) => {
-    if (isPlacing()) return;
-    if (activeTool) return;
-    if (e.button !== 0) return;
-    const photo = e.target.closest('.photo');
-    if (!photo) {
-      deselectPhoto();
-      if (document.activeElement !== editor) {
-        setTimeout(() => { if (!activeTool && !isPlacing()) editor.focus(); }, 0);
-      }
-      return;
-    }
-    const handleRotate = e.target.closest('.ph-rot');
-    const handleResize = e.target.closest('.ph-rs');
-    e.preventDefault();
-    selectPhoto(photo);
-    const rect = editor.getBoundingClientRect();
-    const cx = parseFloat(photo.dataset.cx) || 0;
-    const cy = parseFloat(photo.dataset.cy) || 0;
-    const centerClientX = rect.left + cx;
-    const centerClientY = rect.top + cy;
-    const startX = e.clientX;
-    const startY = e.clientY;
-    if (handleRotate) {
-      interaction = {
-        type: 'rotate', el: photo, centerClientX, centerClientY,
-        startAngle: Math.atan2(startY - centerClientY, startX - centerClientX),
-        startRot: parseFloat(photo.dataset.rot) || 0
-      };
-    } else if (handleResize) {
-      interaction = {
-        type: 'resize', el: photo, centerClientX, centerClientY,
-        startW: parseFloat(photo.dataset.w) || 160,
-        startDist: Math.max(1, Math.hypot(startX - centerClientX, startY - centerClientY))
-      };
-    } else {
-      interaction = { type: 'move', el: photo, startX, startY, startCx: cx, startCy: cy };
-    }
-    window.addEventListener('pointermove', onPhotoPointerMove);
-    window.addEventListener('pointerup', onPhotoPointerUp);
-    window.addEventListener('pointercancel', onPhotoPointerUp);
-  });
 
   /* ---------- Draw ---------- */
   function normalizeDrawSvg() {
@@ -2150,9 +2329,9 @@
     lastEdWidth = w;
   }
 
-  if (window.ResizeObserver && editor) {
-    const ro = new ResizeObserver(() => checkReflow());
-    ro.observe(editor);
+  if (window.ResizeObserver) {
+    editorRO = new ResizeObserver(() => checkReflow());
+    observeEditor();
   }
 
   window.addEventListener('resize', () => {
@@ -2180,6 +2359,7 @@
       if (typeof n.draw !== 'string') n.draw = '';
       if (typeof n.html !== 'string') n.html = '';
       if (typeof n.title !== 'string') n.title = '';
+      n.pinned = !!n.pinned;
     });
 
     setView('main');
