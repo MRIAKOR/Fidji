@@ -83,7 +83,6 @@ function injectButton() {
   btn.id = 'micBtn';
   btn.title = msg('title');
   btn.innerHTML = '<svg class="ic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"/><line x1="12" y1="18" x2="12" y2="21"/></svg>';
-  /* Не даём кнопке украсть фокус у редактора */
   btn.addEventListener('mousedown', (e) => e.preventDefault());
   const anchor = q('.save-wrap');
   if (anchor) { tools.insertBefore(sep, anchor); tools.insertBefore(btn, anchor); }
@@ -121,31 +120,47 @@ function insertText(text) {
   if (sel2 && sel2.rangeCount) voiceRange = sel2.getRangeAt(0).cloneRange();
   console.log('voice: вставлено в заметку:', text);
 }
+/* ---------- Команды ---------- */
+const TRIGGERS = ['фиджи', 'fidji', 'fiji'];
+function normCmd(t) {
+  return String(t || '').toLowerCase().replace(/ё/g, 'е').replace(/[^a-zа-я0-9\s]/gi, ' ').replace(/\s+/g, ' ').trim();
+}
 function runCommand(raw) {
-  const s = String(raw || '').toLowerCase().replace(/ё/g, 'е').replace(/[.,!?;:…]/g, '').replace(/\s+/g, ' ').trim();
+  const s = normCmd(raw);
+  if (!s) return false;
   let rest = null;
-  if (s.indexOf('фиджи') === 0) rest = s.slice(5).trim();
-  else if (s.indexOf('fidji') === 0) rest = s.slice(5).trim();
-  if (rest === null) return false;
+  for (const trig of TRIGGERS) {
+    if (s === trig) { rest = ''; break; }
+    if (s.indexOf(trig + ' ') === 0) { rest = s.slice(trig.length + 1); break; }
+  }
+  if (rest === null) {
+    console.log('voice: cmd check: триггер не найден в', JSON.stringify(s));
+    return false;
+  }
+  console.log('voice: cmd check: триггер найден, команда =', JSON.stringify(rest));
   if (!rest) return true;
   const click = (sel) => { const el = q(sel); if (el) el.click(); };
-  if (rest.indexOf('новая заметка') === 0 || rest.indexOf('новую заметку') === 0) { click('#newNote'); return true; }
-  if (rest.indexOf('сохрани') === 0) { click('#saveBtn'); return true; }
-  if (rest.indexOf('удали') === 0) { click('#deleteNote'); return true; }
-  if (rest.indexOf('открепи') === 0 || rest.indexOf('закрепи') === 0) { const p = q('.note-item.active .pin'); if (p) p.click(); return true; }
-  if (rest.indexOf('найди') === 0) {
-    const word = rest.slice(5).trim();
+  const has = (list) => list.some(p => rest.indexOf(p) === 0);
+  if (has(['новая заметка', 'новую заметку', 'new note'])) { click('#newNote'); return true; }
+  if (has(['сохрани', 'сохранить', 'save'])) { click('#saveBtn'); return true; }
+  if (has(['удали', 'удалить', 'delete'])) { click('#deleteNote'); return true; }
+  if (has(['открепи', 'открепить', 'unpin'])) { const p = q('.note-item.active .pin'); if (p) p.click(); return true; }
+  if (has(['закрепи', 'закрепить', 'pin'])) { const p2 = q('.note-item.active .pin'); if (p2) p2.click(); return true; }
+  if (has(['найди', 'найти', 'find', 'search'])) {
+    const word = rest.replace(/^(найди|найти|find|search)\s*/, '').trim();
     const w = q('#window');
     if (w && w.classList.contains('no-list')) click('#listToggle');
     const sEl = q('#search');
     if (sEl) { sEl.value = word; sEl.dispatchEvent(new Event('input', { bubbles: true })); }
     return true;
   }
-  if (rest.indexOf('переведи') === 0) { click('#translateBtn'); return true; }
-  if (rest.indexOf('тема') === 0) { click('#themeToggle'); return true; }
-  if (rest.indexOf('стоп') === 0 || rest.indexOf('остановись') === 0) { stopVoice(true); return true; }
+  if (has(['переведи', 'перевести', 'translate'])) { click('#translateBtn'); return true; }
+  if (has(['тема', 'theme'])) { click('#themeToggle'); return true; }
+  if (has(['стоп', 'stop', 'остановись'])) { stopVoice(true); return true; }
+  console.log('voice: cmd check: триггер был, но команда не распознана:', JSON.stringify(rest));
   return true;
 }
+/* ---------- Захват и распознавание ---------- */
 function resample(input, from, to) {
   if (from === to) return input;
   const ratio = from / to;
@@ -183,6 +198,7 @@ async function sendSegment(f32) {
     console.log('voice: whisper вернул пустоту');
     return;
   }
+  console.log('voice: распознано:', JSON.stringify(text));
   const w = q('#window');
   if (w) w.classList.remove('voice-on');
   if (runCommand(text)) return;
@@ -266,7 +282,6 @@ function stopVoice(flush) {
       v.pending = v.pending.then(() => sendSegment(merged));
     }
   }
-  /* Возвращаем курсор в заметку, когда всё дообработается */
   v.pending.then(refocusEditor).catch(() => {});
 }
 function init() {
