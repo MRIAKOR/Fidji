@@ -38,11 +38,3 @@ Say the trigger word **Fidji** followed by a command:
 | Fidji stop | Stop listening |
 
 Anything said without the trigger word is inserted into the note as plain text.
-
-## Getting started
-
-Requirements: Node.js 18+ and npm.
-
-```bash
-npm install
-npm start
