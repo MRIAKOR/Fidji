@@ -1,7 +1,7 @@
 {
   "name": "fidji",
   "productName": "Fidji",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Fidji notes",
   "main": "main.js",
   "author": "MRIAKOR",
@@ -25,6 +25,7 @@
       "main.js",
       "preload.js",
       "renderer.js",
+      "voice.js",
       "index.html",
       "styles.css",
       "package.json"

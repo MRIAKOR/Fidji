@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('fidji', {
   addImages: () => ipcRenderer.invoke('image:add'),
   getImagesBase: () => ipcRenderer.invoke('image:getBase'),
   openTextFile: () => ipcRenderer.invoke('file:openText'),
+  voiceEnsure: () => ipcRenderer.invoke('voice:ensure'),
+  voiceSegment: (data) => ipcRenderer.invoke('voice:segment', data),
   auth: {
     getStatus: () => ipcRenderer.invoke('auth:getStatus'),
     setPassword: (pw) => ipcRenderer.invoke('auth:setPassword', pw),
