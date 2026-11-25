@@ -8,6 +8,7 @@ let toastEl = null;
 let toastTimer = null;
 let loadingTimer = null;
 let ensured = false;
+let tbRows = null;
 const CHUNK_SEC = 12;
 
 function uiRu() {
@@ -34,6 +35,111 @@ function errText(r) {
   };
   return map[code] || ' (' + code + ')';
 }
+/* ---------- Настройка тулбара ---------- */
+const TOOLBAR_ITEMS = [
+  { id: 'bold', sel: ['.tools-static [data-cmd="bold"]'], ru: 'Жирный', en: 'Bold' },
+  { id: 'italic', sel: ['.tools-static [data-cmd="italic"]'], ru: 'Курсив', en: 'Italic' },
+  { id: 'underline', sel: ['.tools-static [data-cmd="underline"]'], ru: 'Подчёркнутый', en: 'Underline' },
+  { id: 'strike', sel: ['.tools-static [data-cmd="strikeThrough"]'], ru: 'Зачёркнутый', en: 'Strikethrough' },
+  { id: 'h1', sel: ['.tools-static [data-block="h1"]'], ru: 'Заголовок 1', en: 'Heading 1' },
+  { id: 'h2', sel: ['.tools-static [data-block="h2"]'], ru: 'Заголовок 2', en: 'Heading 2' },
+  { id: 'p', sel: ['.tools-static [data-block="p"]'], ru: 'Абзац', en: 'Paragraph' },
+  { id: 'ul', sel: ['.tools-static [data-cmd="insertUnorderedList"]'], ru: 'Маркированный список', en: 'Bullet list' },
+  { id: 'ol', sel: ['.tools-static [data-cmd="insertOrderedList"]'], ru: 'Нумерованный список', en: 'Numbered list' },
+  { id: 'checklist', sel: ['#btnChecklist'], ru: 'Чек-лист', en: 'Checklist' },
+  { id: 'table', sel: ['#btnTable'], ru: 'Таблица', en: 'Table' },
+  { id: 'align', sel: ['.tools-static [data-align]'], ru: 'Выравнивание', en: 'Alignment' },
+  { id: 'image', sel: ['#btnAddImg'], ru: 'Картинка', en: 'Image' },
+  { id: 'marker', sel: ['#markerBtn'], offAlso: ['#markerPresets'], ru: 'Маркер', en: 'Marker' },
+  { id: 'eraser', sel: ['#eraserBtn'], offAlso: ['#eraserPresets'], ru: 'Ластик', en: 'Eraser' },
+  { id: 'translate', sel: ['#translateBtn'], ru: 'Перевод', en: 'Translate' },
+  { id: 'mic', sel: ['#micBtn', '#micSep'], ru: 'Голосовой ввод', en: 'Voice input' }
+];
+function loadTbCfg() {
+  try { return JSON.parse(localStorage.getItem('fidji-toolbar') || '{}'); } catch { return {}; }
+}
+function saveTbCfg(c) {
+  try { localStorage.setItem('fidji-toolbar', JSON.stringify(c)); } catch {}
+}
+function tidySeparators() {
+  const tools = q('.tools-static');
+  if (!tools) return;
+  let lastVisible = null;
+  Array.from(tools.children).forEach(ch => {
+    if (ch.classList.contains('tb-sep')) {
+      ch.hidden = !lastVisible;
+      if (!ch.hidden) lastVisible = ch;
+    } else if (!ch.hidden) {
+      lastVisible = ch;
+    }
+  });
+  if (lastVisible && lastVisible.classList.contains('tb-sep')) lastVisible.hidden = true;
+  let prevSep = false;
+  Array.from(tools.children).forEach(ch => {
+    if (ch.hidden) return;
+    if (ch.classList.contains('tb-sep')) {
+      if (prevSep) ch.hidden = true;
+      else prevSep = true;
+    } else prevSep = false;
+  });
+}
+function applyToolbarConfig() {
+  const cfg = loadTbCfg();
+  TOOLBAR_ITEMS.forEach(item => {
+    const on = cfg[item.id] !== false;
+    item.sel.forEach(s => {
+      const el = q(s);
+      if (el) el.hidden = !on;
+    });
+    (item.offAlso || []).forEach(s => {
+      const el = q(s);
+      if (el && !on) el.hidden = true;
+    });
+  });
+  tidySeparators();
+}
+function updateTbLabels() {
+  const t2 = q('#tbCfgTitle');
+  if (t2) t2.textContent = uiRu() ? 'Панель инструментов' : 'Toolbar buttons';
+  if (!tbRows) return;
+  TOOLBAR_ITEMS.forEach(item => { if (tbRows[item.id]) tbRows[item.id].textContent = uiRu() ? item.ru : item.en; });
+}
+function buildToolbarSettings() {
+  const card = q('#viewSettings .screen-card');
+  if (!card || q('#tbCfg')) return;
+  const title = document.createElement('p');
+  title.className = 'screen-sub tb-cfg-title';
+  title.id = 'tbCfgTitle';
+  const box = document.createElement('div');
+  box.className = 'tb-cfg';
+  box.id = 'tbCfg';
+  const cfg = loadTbCfg();
+  tbRows = {};
+  TOOLBAR_ITEMS.forEach(item => {
+    const row = document.createElement('label');
+    row.className = 'tb-cfg-row';
+    const span = document.createElement('span');
+    span.textContent = uiRu() ? item.ru : item.en;
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = cfg[item.id] !== false;
+    cb.addEventListener('change', () => {
+      const c = loadTbCfg();
+      c[item.id] = cb.checked;
+      saveTbCfg(c);
+      applyToolbarConfig();
+    });
+    row.appendChild(span);
+    row.appendChild(cb);
+    box.appendChild(row);
+    tbRows[item.id] = span;
+  });
+  const closeRow = card.querySelector('.row-btns.center');
+  if (closeRow) { card.insertBefore(title, closeRow); card.insertBefore(box, closeRow); }
+  else { card.appendChild(title); card.appendChild(box); }
+  updateTbLabels();
+}
+/* ---------- Служебное ---------- */
 function cleanupStrayText() {
   const body = document.body;
   if (!body) return;
@@ -52,6 +158,20 @@ function injectStyles() {
     '@keyframes micpulse { 0%,100% { box-shadow: 0 0 0 0 rgba(255,59,48,.35); } 50% { box-shadow: 0 0 0 6px rgba(255,59,48,0); } }',
     '#voiceToast { position: fixed; left: 50%; bottom: 18px; z-index: 999; transform: translate(-50%, 12px); opacity: 0; pointer-events: none; background: var(--win-bg); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 8px 14px; font-size: 12.5px; box-shadow: 0 12px 30px rgba(0,0,0,.18); transition: opacity .2s ease, transform .2s ease; }',
     '#voiceToast.on { opacity: 1; transform: translate(-50%, 0); }',
+    '#viewSettings.active { align-items: stretch; justify-content: flex-start; }',
+    '#viewSettings .screen-card { max-width: 900px; width: 100%; height: 100%; max-height: 100%; justify-content: flex-start; text-align: left; gap: 14px; }',
+    '#viewSettings .screen-title { text-align: left; font-size: 20px; }',
+    '#viewSettings .screen-sub { text-align: left; }',
+    '#viewSettings .lang-row { justify-content: flex-start; }',
+    '#viewSettings .row-btns, #viewSettings .row-btns.center { justify-content: flex-start; }',
+    '#viewSettings .tb-cfg-title { margin-top: 2px; font-size: 13px; font-weight: 600; color: var(--text); }',
+    '#viewSettings .tb-cfg { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 2px 22px; max-height: none; overflow: visible; text-align: left; width: 100%; padding: 2px; }',
+    '.tb-cfg-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12.5px; color: var(--text); padding: 5px 8px; border-radius: 8px; cursor: pointer; }',
+    '.tb-cfg-row:hover { background: var(--hover); }',
+    '.tb-cfg-row input[type="checkbox"] { appearance: none; -webkit-appearance: none; width: 34px; height: 20px; border-radius: 999px; background: var(--active); position: relative; cursor: pointer; transition: background .15s ease; flex: none; outline: none; margin: 0; }',
+    '.tb-cfg-row input[type="checkbox"]::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--win-bg); transition: left .15s ease; box-shadow: 0 1px 3px rgba(0,0,0,.3); }',
+    '.tb-cfg-row input[type="checkbox"]:checked { background: var(--accent); }',
+    '.tb-cfg-row input[type="checkbox"]:checked::after { left: 16px; }',
     '@media (prefers-reduced-motion: reduce) { .tools-static #micBtn.on { animation: none; } #window.voice-on .editor, #window.voice-on .note-title, #window.voice-on .draw-layer { filter: none; opacity: 1; transform: none; } #window.voice-on .reflow-veil { opacity: 0; } }'
   ].join('\n');
   document.head.appendChild(st);
@@ -78,6 +198,7 @@ function injectButton() {
   if (!tools) return null;
   const sep = document.createElement('span');
   sep.className = 'tb-sep';
+  sep.id = 'micSep';
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.id = 'micBtn';
@@ -88,6 +209,24 @@ function injectButton() {
   if (anchor) { tools.insertBefore(sep, anchor); tools.insertBefore(btn, anchor); }
   else { tools.appendChild(sep); tools.appendChild(btn); }
   return btn;
+}
+function bindToolSettingsSafety() {
+  ['#markerBtn', '#eraserBtn'].forEach(s => {
+    const b = q(s);
+    if (!b) return;
+    b.addEventListener('click', () => {
+      setTimeout(() => {
+        if (!b.classList.contains('on')) return;
+        const ts = q('#toolSettings');
+        if (ts && ts.hidden) ts.hidden = false;
+        const w = q('#window');
+        if (w && w.classList.contains('no-info')) {
+          const pt = q('#panelToggle');
+          if (pt) pt.click();
+        }
+      }, 0);
+    });
+  });
 }
 function isMainView() { const v = q('#viewMain'); return !!v && !v.hidden; }
 function editorEl() { return q('#editor'); }
@@ -120,45 +259,98 @@ function insertText(text) {
   if (sel2 && sel2.rangeCount) voiceRange = sel2.getRangeAt(0).cloneRange();
   console.log('voice: вставлено в заметку:', text);
 }
-/* ---------- Команды ---------- */
+/* ---------- Команды: нечёткий поиск ---------- */
 const TRIGGERS = ['фиджи', 'fidji', 'fiji'];
 function normCmd(t) {
   return String(t || '').toLowerCase().replace(/ё/g, 'е').replace(/[^a-zа-я0-9\s]/gi, ' ').replace(/\s+/g, ' ').trim();
 }
+function lev(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  let prev = new Array(b.length + 1);
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+function click(sel) { const el = q(sel); if (el) el.click(); }
+function pinClick() { const p = q('.note-item.active .pin'); if (p) p.click(); }
+function doFind(word) {
+  const w = q('#window');
+  if (w && w.classList.contains('no-list')) click('#listToggle');
+  const sEl = q('#search');
+  if (sEl) { sEl.value = word; sEl.dispatchEvent(new Event('input', { bubbles: true })); }
+}
+/* Группы команд: фразы + действие */
+function cmdGroups() {
+  return [
+    { p: ['новая заметка', 'новую заметку', 'new note'], run: () => click('#newNote') },
+    { p: ['сохрани', 'сохранить', 'save'], run: () => click('#saveBtn') },
+    { p: ['удали', 'удалить', 'delete'], run: () => click('#deleteNote') },
+    { p: ['открепи', 'открепить', 'unpin'], run: pinClick },
+    { p: ['закрепи', 'закрепить', 'pin'], run: pinClick },
+    { p: ['переведи', 'перевести', 'translate'], run: () => click('#translateBtn') },
+    { p: ['тема', 'theme'], run: () => click('#themeToggle') },
+    { p: ['стоп', 'stop', 'остановись'], run: () => stopVoice(true) },
+    { p: ['найди', 'найти', 'find', 'search'], run: null }
+  ];
+}
+/* Совпадение фразы с началом строки, допускаем ошибку в 1 букву */
+function matchPhrase(restStr, ph) {
+  if (restStr.indexOf(ph) === 0) return true;
+  if (restStr.length >= ph.length - 1 && lev(restStr.slice(0, ph.length), ph) <= 1) return true;
+  return false;
+}
 function runCommand(raw) {
   const s = normCmd(raw);
   if (!s) return false;
-  let rest = null;
-  for (const trig of TRIGGERS) {
-    if (s === trig) { rest = ''; break; }
-    if (s.indexOf(trig + ' ') === 0) { rest = s.slice(trig.length + 1); break; }
+  const words = s.split(' ');
+  /* Ищем триггер среди первых трёх слов, нечётко */
+  let trigIdx = -1;
+  for (let i = 0; i < Math.min(3, words.length); i++) {
+    const w = words[i];
+    for (const trig of TRIGGERS) {
+      const allow = trig.length > 4 ? 2 : 1;
+      if (w === trig || (Math.abs(w.length - trig.length) <= allow && lev(w, trig) <= allow)) { trigIdx = i; break; }
+    }
+    if (trigIdx >= 0) break;
   }
-  if (rest === null) {
-    console.log('voice: cmd check: триггер не найден в', JSON.stringify(s));
-    return false;
+  const groups = cmdGroups();
+  if (trigIdx >= 0) {
+    const rest = words.slice(trigIdx + 1).join(' ');
+    console.log('voice: cmd check: триггер найден, команда =', JSON.stringify(rest));
+    if (!rest) return true;
+    for (const g of groups) {
+      for (const ph of g.p) {
+        if (matchPhrase(rest, ph)) {
+          if (g.run === null) doFind(rest.slice(Math.min(ph.length, rest.length)).trim());
+          else g.run();
+          return true;
+        }
+      }
+    }
+    console.log('voice: cmd check: триггер был, но команда не распознана:', JSON.stringify(rest));
+    return true; /* не пишем мусор в заметку */
   }
-  console.log('voice: cmd check: триггер найден, команда =', JSON.stringify(rest));
-  if (!rest) return true;
-  const click = (sel) => { const el = q(sel); if (el) el.click(); };
-  const has = (list) => list.some(p => rest.indexOf(p) === 0);
-  if (has(['новая заметка', 'новую заметку', 'new note'])) { click('#newNote'); return true; }
-  if (has(['сохрани', 'сохранить', 'save'])) { click('#saveBtn'); return true; }
-  if (has(['удали', 'удалить', 'delete'])) { click('#deleteNote'); return true; }
-  if (has(['открепи', 'открепить', 'unpin'])) { const p = q('.note-item.active .pin'); if (p) p.click(); return true; }
-  if (has(['закрепи', 'закрепить', 'pin'])) { const p2 = q('.note-item.active .pin'); if (p2) p2.click(); return true; }
-  if (has(['найди', 'найти', 'find', 'search'])) {
-    const word = rest.replace(/^(найди|найти|find|search)\s*/, '').trim();
-    const w = q('#window');
-    if (w && w.classList.contains('no-list')) click('#listToggle');
-    const sEl = q('#search');
-    if (sEl) { sEl.value = word; sEl.dispatchEvent(new Event('input', { bubbles: true })); }
-    return true;
+  /* Без триггера: только однозначные команды с начала фразы */
+  const distinct = ['новая заметка', 'новую заметку', 'new note', 'сохрани заметку', 'save note', 'удали заметку', 'delete note'];
+  for (const ph of distinct) {
+    if (matchPhrase(s, ph)) {
+      console.log('voice: cmd check: команда без триггера =', JSON.stringify(ph));
+      if (ph.indexOf('нов') === 0 || ph.indexOf('new') === 0) click('#newNote');
+      else if (ph.indexOf('сох') === 0 || ph.indexOf('save') === 0) click('#saveBtn');
+      else click('#deleteNote');
+      return true;
+    }
   }
-  if (has(['переведи', 'перевести', 'translate'])) { click('#translateBtn'); return true; }
-  if (has(['тема', 'theme'])) { click('#themeToggle'); return true; }
-  if (has(['стоп', 'stop', 'остановись'])) { stopVoice(true); return true; }
-  console.log('voice: cmd check: триггер был, но команда не распознана:', JSON.stringify(rest));
-  return true;
+  console.log('voice: cmd check: триггер не найден в', JSON.stringify(s));
+  return false;
 }
 /* ---------- Захват и распознавание ---------- */
 function resample(input, from, to) {
@@ -288,15 +480,22 @@ function init() {
   cleanupStrayText();
   injectStyles();
   micBtn = injectButton();
-  if (!micBtn) return;
-  micBtn.addEventListener('click', () => {
-    if (!isMainView()) return;
-    if (voice) stopVoice(true);
-    else startVoice();
-  });
+  if (micBtn) {
+    micBtn.addEventListener('click', () => {
+      if (!isMainView()) return;
+      if (voice) stopVoice(true);
+      else startVoice();
+    });
+  }
+  bindToolSettingsSafety();
+  applyToolbarConfig();
+  buildToolbarSettings();
   document.addEventListener('click', (e) => {
     if (e.target && e.target.closest && e.target.closest('#langRow .lang-btn')) {
-      setTimeout(() => { if (micBtn) micBtn.title = msg('title'); }, 0);
+      setTimeout(() => {
+        if (micBtn) micBtn.title = msg('title');
+        updateTbLabels();
+      }, 0);
     }
   });
   document.addEventListener('keydown', (e) => {
@@ -307,7 +506,7 @@ function init() {
     new MutationObserver(() => { if (v.hidden && voice) stopVoice(false); }).observe(v, { attributes: true, attributeFilter: ['hidden'] });
   }
   window.addEventListener('beforeunload', () => { if (voice) stopVoice(false); });
-  window.addEventListener('load', cleanupStrayText);
+  window.addEventListener('load', () => { cleanupStrayText(); applyToolbarConfig(); });
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
 else init();

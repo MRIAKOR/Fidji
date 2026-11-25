@@ -147,6 +147,8 @@ const WHISPER_ZIP_URLS = [
   'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-bin-x64.zip',
   'https://gh-proxy.com/https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-bin-x64.zip'
 ];
+/* Подсказка для whisper: с ней он слышит командные слова гораздо чище */
+const WHISPER_PROMPT = 'Фиджи: новая заметка, сохрани, удали заметку, закрепи, открепи, найди, переведи, тема, стоп. Fidji: new note, save, delete note, pin, unpin, find, translate, theme, stop.';
 let voiceReady = null;
 
 function doFetch(url, opts) {
@@ -264,8 +266,7 @@ ipcMain.handle('voice:segment', async (_e, data) => {
     writeWav(wav, Buffer.from(data && data.buffer ? data.buffer : data), 16000);
     console.log('voice: running whisper on', Math.round((data.byteLength / 2 / 16000) * 10) / 10, 'sec of audio');
     const text = await new Promise((resolve, reject) => {
-      /* Только флаги, которые точно есть в этой сборке (сверено с её справкой) */
-      const args = ['-m', modelPath, '-f', wav, '-l', 'auto', '-otxt', '-nt', '-ng', '-of', outPrefix];
+      const args = ['-m', modelPath, '-f', wav, '-l', 'auto', '-otxt', '-nt', '-ng', '-of', outPrefix, '--prompt', WHISPER_PROMPT];
       const child = spawn(exe, args, { windowsHide: true });
       child.stdout.on('data', d => console.log('whisper out:', d.toString().trim()));
       child.stderr.on('data', d => console.log('whisper err:', d.toString().trim()));
