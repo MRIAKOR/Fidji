@@ -59,7 +59,12 @@ function createWindow() {
 }
 
 ipcMain.handle('notes:load', () => {
-  try { return JSON.parse(fs.readFileSync(notesFile(), 'utf-8')); } catch { return []; }
+  try {
+    return JSON.parse(fs.readFileSync(notesFile(), 'utf-8'));
+  } catch (err) {
+    if (err.code === 'ENOENT') return [];
+    throw err;
+  }
 });
 ipcMain.handle('notes:save', (_e, notes) => {
   fs.writeFileSync(notesFile(), JSON.stringify(notes, null, 2), 'utf-8');
