@@ -157,6 +157,7 @@
       'act.delete': 'Delete', 'act.done': 'Done', 'act.close': 'Close', 'act.undo': 'Undo',
       'act.pin': 'Pin', 'act.unpin': 'Unpin',
       'save.btn': 'Save', 'save.dirty': 'Not saved', 'save.saving': 'Saving…', 'save.saved': 'Saved', 'save.error': 'Save failed',
+      'notes.loadError': 'Could not open fidji-notes.json. Check the file or restore a backup, then reopen Fidji.',
       'toast.deleted': 'Note deleted',
       'lock.title': 'Fidji is locked', 'lock.sub': 'Enter your password to continue.', 'lock.ph': 'Password',
       'lock.btn': 'Unlock', 'lock.err': 'Wrong password',
@@ -202,6 +203,7 @@
       'act.delete': 'Удалить', 'act.done': 'Готово', 'act.close': 'Закрыть', 'act.undo': 'Вернуть',
       'act.pin': 'Закрепить', 'act.unpin': 'Открепить',
       'save.btn': 'Сохранить', 'save.dirty': 'Не сохранено', 'save.saving': 'Сохранение…', 'save.saved': 'Сохранено', 'save.error': 'Ошибка сохранения',
+      'notes.loadError': 'Не удалось открыть fidji-notes.json. Проверьте файл или восстановите его из копии, затем перезапустите Fidji.',
       'toast.deleted': 'Заметка удалена',
       'lock.title': 'Fidji заблокирован', 'lock.sub': 'Введите пароль, чтобы продолжить.', 'lock.ph': 'Пароль',
       'lock.btn': 'Войти', 'lock.err': 'Неверный пароль',
@@ -2350,8 +2352,17 @@
 
   /* ---------- App start ---------- */
   async function startApp() {
-    notes = await window.fidji.loadNotes();
-    if (!Array.isArray(notes)) notes = [];
+    try {
+      const loaded = await window.fidji.loadNotes();
+      if (!Array.isArray(loaded) || loaded.some(n => !n || typeof n !== 'object' || Array.isArray(n))) {
+        throw new Error('Invalid notes file');
+      }
+      notes = loaded;
+    } catch (err) {
+      console.error('load notes error:', err);
+      window.alert(t('notes.loadError'));
+      return;
+    }
     notes.forEach(n => {
       if (!n.id) n.id = uid();
       if (!n.createdAt) n.createdAt = n.updatedAt || Date.now();
